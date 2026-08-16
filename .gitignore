@@ -1,0 +1,38 @@
+# Python runtime & Virtualenvs
+python_runtime/
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Pytest / Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & temporary files
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+.directory
+desktop.ini
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build & packaging artifacts
+build/
+dist/
+*.egg-info/
+*.zip
+*.tar.gz

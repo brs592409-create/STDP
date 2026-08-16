@@ -1,0 +1,13 @@
+{
+  "steam_path": "c:\\program files (x86)\\steam",
+  "selected_library_path": null,
+  "active_unlocker": "steamtools",
+  "auto_shutdown_steam": true,
+  "auto_restart_steam": true,
+  "depotbox_api_url": "https://depotbox.org",
+  "depotbox_timeout_seconds": 15,
+  "theme": "steam_dark",
+  "log_level": "INFO",
+  "downloads_dir": null,
+  "onlinefix_login_prompt_shown": false
+}
