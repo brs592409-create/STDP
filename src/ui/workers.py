@@ -113,11 +113,13 @@ class InjectGameWorker(QThread):
             self.progress.emit("Depot anahtarları konfigürasyona işleniyor...", 60)
             KeyInjector.inject_depot_keys_to_config_vdf(steam_path, self.app_info)
 
-            # 4. Step: Clean any stale/fake ACF and library registration so Steam displays the clean 'YÜKLE' button
+            # 4. Step: Write ACF Manifest so Steam natively recognizes the game with 'İndir / Yükle' button
             self.progress.emit("Steam kütüphane kaydı hazırlanıyor...", 75)
-            ACFBuilder.remove_app_manifest_and_registration(
+            ACFBuilder.write_acf(
+                app_info=self.app_info,
+                library_path=self.target_library_path or steam_path,
                 steam_path=steam_path,
-                app_id=self.app_info.app_id,
+                ready_to_install=self.ready_to_install,
             )
 
             # 5. Step: Inject via Active Unlocker (SteamTools / GreenLuma Hook)
