@@ -208,6 +208,13 @@ class ACFBuilder:
         steamapps_dir = lib / "steamapps" if (lib / "steamapps").exists() or lib.name != "steamapps" else lib
         steamapps_dir.mkdir(parents=True, exist_ok=True)
 
+        # Ensure physical game folder in steamapps/common exists so Steam treats it as persistent on restart
+        common_dir = steamapps_dir / "common" / app_info.safe_install_dir
+        try:
+            common_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.debug(f"Could not create common folder {common_dir}: {e}")
+
         acf_file = steamapps_dir / f"appmanifest_{app_info.app_id}.acf"
 
         if acf_file.exists() and merge_if_exists:

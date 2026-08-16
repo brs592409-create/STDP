@@ -296,8 +296,31 @@ class SteamToolsAdapter(UnlockerAdapter):
             logger.error(f"Failed to launch SteamTools.exe: {e}")
             return False
 
+    @staticmethod
+    def enable_autostart() -> bool:
+        """Register SteamTools in Windows registry Run key so it starts automatically with Windows."""
+        if sys.platform != "win32":
+            return False
+        st_exe = SteamToolsAdapter.find_steamtools_exe()
+        if not st_exe or not st_exe.exists():
+            return False
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE,
+            ) as key:
+                winreg.SetValueEx(key, "SteamTools", 0, winreg.REG_SZ, f'"{st_exe}"')
+            logger.info(f"SteamTools registered to Windows startup: {st_exe}")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not register SteamTools to startup: {e}")
+            return False
+
     def install_hook(self, steam_path: Union[Path, str]) -> bool:
-        """Create necessary st_scripts directories, deploy Core.dll, and ensure SteamTools is running."""
+        """Create necessary st_scripts directories, deploy Core.dll, enable startup, and ensure SteamTools is running."""
         try:
             # 1. Ensure scripts directories
             for d in self._get_scripts_dirs(steam_path):
@@ -311,7 +334,10 @@ class SteamToolsAdapter(UnlockerAdapter):
             # 3. Deploy Core.dll
             self.deploy_core_dll(steam_path)
 
-            # 4. Ensure SteamTools background process is active
+            # 4. Register SteamTools to autostart on Windows boot
+            self.enable_autostart()
+
+            # 5. Ensure SteamTools background process is active
             self.ensure_steamtools_running(steam_path)
 
             return True
