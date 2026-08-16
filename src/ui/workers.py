@@ -145,18 +145,18 @@ class InjectGameWorker(QThread):
                 self.progress.emit("Steam kütüphanesi yükleniyor...", 95)
                 QThread.msleep(4500)
 
-            # 7. Step: Navigate to game in Steam Library & open install dialog
+            # 7. Step: Focus Steam Library and trigger installation dialog cleanly
             self.progress.emit("Steam kütüphanesine yönlendiriliyor...", 98)
+            SteamProcessManager.trigger_open_library()
+            QThread.msleep(1200)
             SteamProcessManager.trigger_install(self.app_info.app_id)
-            QThread.msleep(800)
-            SteamProcessManager.trigger_nav_game(self.app_info.app_id)
 
             self.progress.emit("Tamamlandı!", 100)
             self.finished.emit(
                 True,
                 f"'{self.app_info.name}' (AppID: {self.app_info.app_id}) Steam kütüphanenize başarıyla eklendi!\n\n"
-                f"Steam kütüphanenizde doğrudan 'YÜKLE / İNDİR' butonu açılmıştır. Butona tıklayarak oyunun asıl dosyalarını doğrudan Steam üzerinden indirebilirsiniz.\n\n"
-                f"💡 Not: Lisans hatası almamak için arka planda SteamTools kilit motorunun açık kalması gerekir (sağ altta sistem tepsisinde simgesi görünmelidir)."
+                f"Steam kütüphaneniz doğrudan açılarak indirme penceresi başlatılmıştır.\n\n"
+                f"💡 Not: Lisans hatası almamak için arka planda SteamTools kilit motorunun açık kalması yeterlidir."
             )
 
         except Exception as e:

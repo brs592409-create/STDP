@@ -45,3 +45,10 @@ def test_trigger_validate():
         assert SteamProcessManager.trigger_validate(12345) is True
         mock_startfile.assert_called_once_with("steam://validate/12345")
 
+
+def test_trigger_open_library():
+    with patch("os.startfile", create=True) as mock_startfile:
+        assert SteamProcessManager.trigger_open_library() is True
+        mock_startfile.assert_called_once_with("steam://open/games")
+
+

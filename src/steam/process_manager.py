@@ -162,8 +162,23 @@ class SteamProcessManager:
         return SteamProcessManager.start_steam(steam_path=steam_path, extra_args=extra_args)
 
     @staticmethod
+    def trigger_open_library() -> bool:
+        """Open and focus the Steam Library view cleanly without store redirects."""
+        uri = "steam://open/games"
+        logger.info(f"Triggering Steam library view URI: {uri}")
+        try:
+            if sys.platform == "win32":
+                os.startfile(uri)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", uri])
+            return True
+        except Exception as e:
+            logger.error(f"Failed to open Steam library view: {e}")
+            return False
+
+    @staticmethod
     def trigger_nav_game(app_id: int) -> bool:
-        """Open and focus the game in Steam Library without triggering purchase store modal."""
+        """Open and focus the game in Steam Library."""
         uri = f"steam://nav/games/details/{app_id}"
         logger.info(f"Triggering Steam library navigation URI: {uri}")
         try:
