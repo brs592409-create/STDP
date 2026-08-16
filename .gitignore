@@ -1,5 +1,4 @@
-# Python runtime & Virtualenvs
-python_runtime/
+# Python virtualenvs (external)
 venv/
 .venv/
 env/
