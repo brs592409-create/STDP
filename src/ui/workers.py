@@ -109,8 +109,14 @@ class InjectGameWorker(QThread):
                     steam_path,
                 )
 
-            # 3. Step: Inject Depot Decryption Keys directly into Steam/config/config.vdf
-            self.progress.emit("Depot anahtarları konfigürasyona işleniyor...", 60)
+            # Log detected local Steam accounts
+            users = steam_detector.get_steam_users(steam_path)
+            if users:
+                user_names = [f"{u.get('persona_name') or u.get('account_name')} (ID: {u.get('account_id')})" for u in users]
+                logger.info(f"Detected {len(users)} local Steam account(s): {', '.join(user_names)}. Applying multi-account injection.")
+
+            # 3. Step: Inject Depot Decryption Keys directly into Steam/config/config.vdf (Global + Multi-Account)
+            self.progress.emit("Depot anahtarları ve hesap kayıtları işleniyor...", 60)
             KeyInjector.inject_depot_keys_to_config_vdf(steam_path, self.app_info)
 
             # 4. Step: Write ACF Manifest so Steam natively recognizes the game with 'İndir / Yükle' button

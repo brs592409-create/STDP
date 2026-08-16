@@ -215,9 +215,77 @@ class KeyInjector:
                 for depot_id, key in keys_to_inject.items():
                     root_depots[str(depot_id)] = {"DecryptionKey": key}
 
+            # 4. Multi-Account: Software -> Valve -> Steam -> Accounts -> <account_name> -> depots
+            if isinstance(sw, dict):
+                vl = sw.setdefault("Valve", {})
+                if isinstance(vl, dict):
+                    st = vl.setdefault("Steam", {})
+                    if isinstance(st, dict):
+                        accounts_block = st.get("Accounts", {})
+                        if isinstance(accounts_block, dict):
+                            for acc_name, acc_data in accounts_block.items():
+                                if isinstance(acc_data, dict):
+                                    acc_depots = acc_data.setdefault("depots", {})
+                                    if isinstance(acc_depots, dict):
+                                        for depot_id, key in keys_to_inject.items():
+                                            acc_depots[str(depot_id)] = {"DecryptionKey": key}
+
             dump_vdf_file(config_vdf, data)
-            logger.info(f"Successfully injected {len(keys_to_inject)} depot keys into {config_vdf} (InstallConfigStore + Software)")
+            logger.info(f"Successfully injected {len(keys_to_inject)} depot keys into {config_vdf} (InstallConfigStore + Software + Multi-Account)")
+
+            # Also register in all local user profiles under userdata/<account_id>
+            KeyInjector.inject_to_all_userdata(steam_path, app_info)
             return True
         except Exception as e:
             logger.warning(f"Could not inject depot keys into config.vdf: {e}")
             return False
+
+    @staticmethod
+    def inject_to_all_userdata(
+        steam_path: Union[Path, str],
+        app_info: AppInfo,
+    ) -> int:
+        """Register the application across all local user config files under userdata/<account_id>/config/localconfig.vdf."""
+        sp = Path(steam_path)
+        userdata_dir = sp / "userdata"
+        if not userdata_dir.exists():
+            return 0
+
+        updated_count = 0
+        app_id_str = str(app_info.app_id)
+
+        for user_dir in userdata_dir.iterdir():
+            if not user_dir.is_dir() or not user_dir.name.isdigit():
+                continue
+
+            localconfig_file = user_dir / "config" / "localconfig.vdf"
+            if not localconfig_file.exists():
+                continue
+
+            try:
+                # Backup localconfig.vdf
+                bak_file = localconfig_file.with_suffix(".vdf.bak")
+                bak_file.write_bytes(localconfig_file.read_bytes())
+
+                data = parse_vdf_file(localconfig_file)
+                ulcs = data.setdefault("UserLocalConfigStore", {})
+                if isinstance(ulcs, dict):
+                    sw = ulcs.setdefault("Software", {})
+                    if isinstance(sw, dict):
+                        vl = sw.setdefault("Valve", {})
+                        if isinstance(vl, dict):
+                            st = vl.setdefault("Steam", {})
+                            if isinstance(st, dict):
+                                apps_block = st.setdefault("Apps", {})
+                                if isinstance(apps_block, dict):
+                                    app_entry = apps_block.setdefault(app_id_str, {})
+                                    if isinstance(app_entry, dict):
+                                        app_entry["Hidden"] = "0"
+
+                dump_vdf_file(localconfig_file, data)
+                updated_count += 1
+                logger.info(f"Registered AppID {app_info.app_id} in userdata localconfig: {localconfig_file}")
+            except Exception as e:
+                logger.warning(f"Could not update userdata localconfig for {user_dir.name}: {e}")
+
+        return updated_count

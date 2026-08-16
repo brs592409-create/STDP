@@ -190,6 +190,41 @@ class SteamDetector:
 
         return folders
 
+    def get_steam_users(self, steam_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+        """Extract all logged-in Steam accounts from loginusers.vdf."""
+        base_steam = steam_path or self.find_steam_path()
+        if not base_steam or not base_steam.exists():
+            return []
+
+        loginusers_file = base_steam / "config" / "loginusers.vdf"
+        if not loginusers_file.exists():
+            return []
+
+        users: List[Dict[str, Any]] = []
+        try:
+            data = parse_vdf_file(loginusers_file)
+            users_dict = data.get("users") or data.get("Users") or {}
+            if isinstance(users_dict, dict):
+                for steamid64, u_info in users_dict.items():
+                    if isinstance(u_info, dict):
+                        try:
+                            account_id_32 = int(steamid64) & 0xFFFFFFFF
+                        except (ValueError, TypeError):
+                            account_id_32 = 0
+
+                        users.append({
+                            "steamid64": str(steamid64),
+                            "account_id": str(account_id_32),
+                            "account_name": u_info.get("AccountName", ""),
+                            "persona_name": u_info.get("PersonaName", u_info.get("AccountName", "")),
+                            "most_recent": str(u_info.get("MostRecent", "0")) == "1",
+                            "remember_password": str(u_info.get("RememberPassword", "0")) == "1",
+                        })
+        except Exception as e:
+            logger.warning(f"Failed to parse loginusers.vdf: {e}")
+
+        return users
+
     def _get_disk_space(self, path: Path) -> tuple[int, int]:
         """Get (total_bytes, free_bytes) for the drive containing path."""
         try:
