@@ -60,10 +60,10 @@ class HealthView(QWidget):
         card_layout.setHorizontalSpacing(24)
         card_layout.setVerticalSpacing(12)
 
-        # Labels & Badges for checkpoints
+        # Labels & Badges for 5 checkpoints
         self.row_labels = [
             ("🎮 Steam Kurulum Yolu:", QLabel("Taranıyor...", self.card)),
-            ("🔌 SteamTools Kilit Motoru:", QLabel("Taranıyor...", self.card)),
+            ("🔌 Yerleşik Kanca Motoru:", QLabel("Taranıyor...", self.card)),
             ("🛡️ Yönetici İzinleri (Admin):", QLabel("Taranıyor...", self.card)),
             ("⚙️ Steam Süreci (steam.exe):", QLabel("Taranıyor...", self.card)),
             ("💾 Depotcache Yazma İzni:", QLabel("Taranıyor...", self.card)),
@@ -78,7 +78,37 @@ class HealthView(QWidget):
 
         main_layout.addWidget(self.card)
 
-        # 3. Actions Row
+        # 3. Security / Antivirus Guidance Card
+        self.defender_card = QFrame(self)
+        self.defender_card.setProperty("class", "surface-card")
+        self.defender_card.setStyleSheet("background-color: #121c27; border: 1px solid #1e3048; border-radius: 8px;")
+        def_layout = QVBoxLayout(self.defender_card)
+        def_layout.setContentsMargins(16, 12, 16, 12)
+        def_layout.setSpacing(6)
+
+        def_title = QLabel("🛡️ Windows Defender & Antivirüs Koruması Bilgisi", self.defender_card)
+        def_title.setStyleSheet("font-weight: bold; color: #66c0f4; font-size: 13px;")
+
+        def_desc = QLabel(
+            "SteamTools kanca motoru ve Online-Fix DLL dosyaları (OnlineFix64.dll vb.) oyun dosyalarına müdahale ettiği için "
+            "Windows Defender veya harici antivirüsler tarafından yanlışlıkla (False-Positive) engellenebilir veya silinebilir.\n"
+            "Sorunsuz bir deneyim için STDP klasörünü ve Steam klasörünüzü Defender dışlama listesine eklemeniz önerilir.",
+            self.defender_card,
+        )
+        def_desc.setStyleSheet("color: #93a7ba; font-size: 12px; line-height: 1.4;")
+        def_desc.setWordWrap(True)
+
+        self.add_exclusion_btn = QPushButton("🛡️ STDP ve Steam Klasörünü Defender İstisnalarına Ekle", self.defender_card)
+        self.add_exclusion_btn.setFixedHeight(34)
+        self.add_exclusion_btn.clicked.connect(self._add_defender_exclusion)
+
+        def_layout.addWidget(def_title)
+        def_layout.addWidget(def_desc)
+        def_layout.addWidget(self.add_exclusion_btn)
+
+        main_layout.addWidget(self.defender_card)
+
+        # 4. Actions Row
         actions_row = QHBoxLayout()
         actions_row.setSpacing(12)
 
@@ -86,7 +116,7 @@ class HealthView(QWidget):
         self.refresh_btn.setFixedHeight(38)
         self.refresh_btn.clicked.connect(self.refresh_health)
 
-        self.repair_btn = QPushButton("⚡ SteamTools'u Başlat / Kancayı Kur", self)
+        self.repair_btn = QPushButton("⚡ Otomatik Onar / Kancayı Kur", self)
         self.repair_btn.setProperty("class", "primary-btn")
         self.repair_btn.setFixedHeight(38)
         self.repair_btn.clicked.connect(self._auto_repair)
@@ -120,17 +150,14 @@ class HealthView(QWidget):
             path_label.setText("✗ Bulunamadı")
             path_label.setStyleSheet("color: #ef5350; font-weight: bold;")
 
-        # 2. Hook & SteamTools status
+        # 2. Hook status
         hook_label = self.row_labels[1][1]
-        if health.unlocker_running:
-            hook_label.setText("✓ Aktif & Arka Planda Çalışıyor (Lisanslar Açık)")
+        if health.active_hook_installed:
+            hook_label.setText("✓ Kurulu / Aktif")
             hook_label.setStyleSheet("color: #57cb65; font-weight: bold;")
-        elif health.unlocker_installed or health.active_hook_installed:
-            hook_label.setText("⚠️ Kurulu Ama Kapalı (Başlat Butonuna Tıklayın)")
-            hook_label.setStyleSheet("color: #f9a825; font-weight: bold;")
         else:
-            hook_label.setText("✗ Kurulu Değil ('SteamTools'u Başlat / Kur' Butonuna Tıklayın)")
-            hook_label.setStyleSheet("color: #ef5350; font-weight: bold;")
+            hook_label.setText("⚠️ Kurulu Değil (Otomatik Onar ile Kurulabilir)")
+            hook_label.setStyleSheet("color: #f9a825; font-weight: bold;")
 
         # 3. Admin Permissions
         admin_label = self.row_labels[2][1]
@@ -159,8 +186,47 @@ class HealthView(QWidget):
             depot_label.setText("✗ Yazılamıyor (İzin Hatası)")
             depot_label.setStyleSheet("color: #ef5350; font-weight: bold;")
 
+    def _add_defender_exclusion(self) -> None:
+        """Add exclusion for STDP application folder and Steam folder in Windows Defender."""
+        import subprocess
+        from pathlib import Path
+        app_dir = Path(__file__).resolve().parent.parent.parent
+        sp = steam_detector.find_steam_path()
+
+        paths = [str(app_dir)]
+        if sp and sp.exists():
+            paths.append(str(sp))
+
+        success_count = 0
+        for p in paths:
+            try:
+                cmd = f"Add-MpPreference -ExclusionPath '{p}'"
+                res = subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if res.returncode == 0:
+                    success_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to add exclusion for {p}: {e}")
+
+        if success_count > 0:
+            QMessageBox.information(
+                self,
+                "İstisna Eklendi",
+                f"STDP ve Steam klasörleri Windows Defender dışlama listesine başarıyla eklendi!\n"
+                f"Artık kanca ve fix dosyalarınız silinmeyecektir.",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Yetki Gerekli",
+                "Defender istisnası eklenemedi. Lütfen uygulamayı 'Yönetici Olarak Çalıştır' seçeneğiyle açtığınızdan emin olun.",
+            )
+
     def _auto_repair(self) -> None:
-        """Attempt to initialize folders, install active hook, and ensure SteamTools is running."""
+        """Attempt to initialize folders and install active hook."""
         cfg = config_manager.config
         sp = steam_detector.find_steam_path()
         if not sp:
@@ -170,16 +236,11 @@ class HealthView(QWidget):
         unlocker = get_unlocker(cfg.active_unlocker) or get_unlocker("steamtools")
         if unlocker:
             unlocker.install_hook(sp)
-            if hasattr(unlocker, "ensure_steamtools_running"):
-                unlocker.ensure_steamtools_running(sp)
 
         # Ensure depotcache
         (sp / "depotcache").mkdir(parents=True, exist_ok=True)
 
         QMessageBox.information(
-            self,
-            "Kilit Motoru Hazır! 🎉",
-            "SteamTools kilit motoru ve gerekli kütüphaneler başarıyla hazırlandı ve arka planda çalıştırıldı.\n\n"
-            "Artık Steam'e eklenen oyunlar 'Lisans Yok' hatası vermeden kütüphanenizde doğrudan indirilebilir durumda olacaktır."
+            self, "Onarım Başarılı", "Kanca dizinleri ve depotcache klasörü başarıyla oluşturuldu ve doğrulandı."
         )
         self.refresh_health()

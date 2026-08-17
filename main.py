@@ -11,15 +11,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Ensure Qt6 binary directory is in DLL search path on Windows
-if sys.platform == "win32":
-    qt_bin = PROJECT_ROOT / "python_runtime" / "Lib" / "site-packages" / "PyQt6" / "Qt6" / "bin"
-    if qt_bin.exists():
-        try:
-            os.add_dll_directory(str(qt_bin))
-        except Exception:
-            pass
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication

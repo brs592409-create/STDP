@@ -23,10 +23,19 @@ class SteamDetector:
     COMMON_PATHS = [
         r"C:\Program Files (x86)\Steam",
         r"C:\Program Files\Steam",
+        r"C:\Steam",
+        r"C:\SteamLibrary",
+        r"C:\Games\Steam",
         r"D:\Steam",
         r"D:\SteamLibrary",
+        r"D:\Games\Steam",
         r"E:\Steam",
         r"E:\SteamLibrary",
+        r"E:\Games\Steam",
+        r"F:\Steam",
+        r"F:\SteamLibrary",
+        r"G:\Steam",
+        r"G:\SteamLibrary",
     ]
 
     def __init__(self, override_steam_path: Optional[Path | str] = None) -> None:
@@ -47,8 +56,8 @@ class SteamDetector:
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
                         val, _ = winreg.QueryValueEx(key, "SteamPath")
                         if val:
-                            p = Path(val)
-                            if p.exists():
+                            p = Path(os.path.normpath(str(val)))
+                            if p.exists() and (p / "steam.exe").exists():
                                 return p
                 except (FileNotFoundError, OSError):
                     pass
@@ -59,8 +68,8 @@ class SteamDetector:
                         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, subkey) as key:
                             val, _ = winreg.QueryValueEx(key, "InstallPath")
                             if val:
-                                p = Path(val)
-                                if p.exists():
+                                p = Path(os.path.normpath(str(val)))
+                                if p.exists() and (p / "steam.exe").exists():
                                     return p
                     except (FileNotFoundError, OSError):
                         pass
@@ -72,6 +81,15 @@ class SteamDetector:
             p = Path(p_str)
             if p.exists() and (p / "steam.exe").exists():
                 return p
+
+        # 3. Dynamic drive scan fallback (Check root of all mounted drives)
+        for drive_letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive_root = Path(f"{drive_letter}:\\")
+            if drive_root.exists():
+                for candidate_name in ["Steam", "SteamLibrary", "Games\\Steam"]:
+                    cand = drive_root / candidate_name
+                    if cand.exists() and (cand / "steam.exe").exists():
+                        return cand
 
         logger.warning("Steam installation directory could not be automatically detected.")
         return None
@@ -190,41 +208,6 @@ class SteamDetector:
 
         return folders
 
-    def get_steam_users(self, steam_path: Optional[Path] = None) -> List[Dict[str, Any]]:
-        """Extract all logged-in Steam accounts from loginusers.vdf."""
-        base_steam = steam_path or self.find_steam_path()
-        if not base_steam or not base_steam.exists():
-            return []
-
-        loginusers_file = base_steam / "config" / "loginusers.vdf"
-        if not loginusers_file.exists():
-            return []
-
-        users: List[Dict[str, Any]] = []
-        try:
-            data = parse_vdf_file(loginusers_file)
-            users_dict = data.get("users") or data.get("Users") or {}
-            if isinstance(users_dict, dict):
-                for steamid64, u_info in users_dict.items():
-                    if isinstance(u_info, dict):
-                        try:
-                            account_id_32 = int(steamid64) & 0xFFFFFFFF
-                        except (ValueError, TypeError):
-                            account_id_32 = 0
-
-                        users.append({
-                            "steamid64": str(steamid64),
-                            "account_id": str(account_id_32),
-                            "account_name": u_info.get("AccountName", ""),
-                            "persona_name": u_info.get("PersonaName", u_info.get("AccountName", "")),
-                            "most_recent": str(u_info.get("MostRecent", "0")) == "1",
-                            "remember_password": str(u_info.get("RememberPassword", "0")) == "1",
-                        })
-        except Exception as e:
-            logger.warning(f"Failed to parse loginusers.vdf: {e}")
-
-        return users
-
     def _get_disk_space(self, path: Path) -> tuple[int, int]:
         """Get (total_bytes, free_bytes) for the drive containing path."""
         try:
@@ -283,30 +266,13 @@ class SteamDetector:
         admin_status = self.is_admin()
         libraries = self.get_library_folders(steam_path) if steam_installed else []
 
-        # Check unlocker and hook status
+        # Check if any hook directory exists
         hook_installed = False
-        unlocker_installed = False
-        unlocker_running = False
-
-        try:
-            from src.unlockers.steamtools_adapter import SteamToolsAdapter
-            st_exe = SteamToolsAdapter.find_steamtools_exe()
-            unlocker_installed = st_exe is not None
-            unlocker_running = SteamToolsAdapter.is_steamtools_running()
-
-            if steam_installed and steam_path:
-                core_dll = steam_path / "Core.dll"
-                xinput_dll = steam_path / "xinput1_4.dll"
-                st_scripts = steam_path / "config" / "st_scripts"
-                applist = steam_path / "AppList"
-                hook_installed = unlocker_installed or core_dll.exists() or xinput_dll.exists() or st_scripts.exists() or applist.exists()
-
-            if not unlocker_installed and not hook_installed:
-                issues.append("SteamTools kilit motoru kurulu değil. Oyunların 'Lisans Yok' hatası vermemesi için SteamTools kurulmalıdır.")
-            elif not unlocker_running:
-                issues.append("SteamTools kilit motoru arka planda çalışmıyor. 'Lisans Yok' hatası almamak için SteamTools açık olmalıdır.")
-        except Exception as e:
-            logger.debug(f"Unlocker health check error: {e}")
+        if steam_installed and steam_path:
+            st_scripts_dir = steam_path / "config" / "st_scripts"
+            applist_dir = steam_path / "AppList"
+            if st_scripts_dir.exists() or applist_dir.exists():
+                hook_installed = True
 
         return SystemHealth(
             steam_installed=steam_installed,
@@ -317,8 +283,6 @@ class SteamDetector:
             depotcache_writable=depotcache_writable,
             libraries_found=libraries,
             active_hook_installed=hook_installed,
-            unlocker_installed=unlocker_installed,
-            unlocker_running=unlocker_running,
             issues=issues,
         )
 

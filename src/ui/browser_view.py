@@ -307,7 +307,7 @@ class BrowserView(QWidget):
             QMessageBox.information(
                 self,
                 "1-Tıkla Aktarım Başarılı! 🎉",
-                msg + "\n\nOyun Steam kütüphanenize eklendi! Steam üzerinden dilediğiniz sürücüyü seçip indirmeyi başlatabilirsiniz.\n\n💡 Not: Lisans hatası almamak için arka planda SteamTools kilit motorunun çalıştığından emin olun (sağ altta sistem tepsisinde simgesi görünmelidir)."
+                msg + "\n\nOyun Steam kütüphanenize eklendi! Steam üzerinden dilediğiniz sürücüyü seçip indirmeyi başlatabilirsiniz."
             )
         else:
             QMessageBox.critical(self, "Aktarım Hatası", msg)

@@ -61,14 +61,9 @@ class DepotCacheManager:
         source: Union[bytes, Path, str],
         overwrite: bool = True,
     ) -> Path:
-        """Save bytes or copy a manifest file to Steam/depotcache and Steam/config/depotcache."""
+        """Save bytes or copy a manifest file to Steam/depotcache."""
         self.ensure_dir()
         target_path = self.get_manifest_path(depot_id, manifest_id)
-
-        # Also ensure fallback directory in config/depotcache
-        config_depotcache = self.steam_path / "config" / "depotcache"
-        config_depotcache.mkdir(parents=True, exist_ok=True)
-        config_target = config_depotcache / f"{depot_id}_{manifest_id}.manifest"
 
         if target_path.exists() and not overwrite:
             logger.debug(f"Manifest already exists and overwrite is disabled: {target_path}")
@@ -76,19 +71,11 @@ class DepotCacheManager:
 
         if isinstance(source, bytes):
             target_path.write_bytes(source)
-            try:
-                config_target.write_bytes(source)
-            except Exception:
-                pass
         else:
             src_path = Path(source)
             if not src_path.exists():
                 raise FileNotFoundError(f"Source manifest file not found: {src_path}")
             shutil.copy2(src_path, target_path)
-            try:
-                shutil.copy2(src_path, config_target)
-            except Exception:
-                pass
 
         logger.info(f"Saved manifest to {target_path} (size: {target_path.stat().st_size} bytes)")
         return target_path

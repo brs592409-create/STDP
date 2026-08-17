@@ -81,14 +81,19 @@ class InjectGameWorker(QThread):
     def run(self) -> None:
         cfg = config_manager.config
         steam_path = (
-            Path(cfg.steam_path) if cfg.steam_path else steam_detector.find_steam_path()
+            Path(cfg.steam_path)
+            if cfg.steam_path and Path(cfg.steam_path).exists()
+            else steam_detector.find_steam_path()
         )
 
         if not steam_path or not steam_path.exists():
-            self.finished.emit(False, "Steam kurulum dizini bulunamadı!")
+            self.finished.emit(False, "Steam kurulum dizini bulunamadı! Lütfen Steam'in kurulu olduğundan emin olun.")
             return
 
         try:
+            # ── Pre-check: is this game already downloaded / installed? ──
+            game_already_downloaded = self._is_game_downloaded(steam_path, self.app_info.app_id, self.app_info.safe_install_dir)
+
             # 1. Step: Steam Shutdown if running and configured
             if cfg.auto_shutdown_steam and SteamProcessManager.is_running():
                 self.progress.emit("Steam istemcisi güvenle kapatılıyor...", 15)
@@ -109,59 +114,140 @@ class InjectGameWorker(QThread):
                     steam_path,
                 )
 
-            # Log detected local Steam accounts
-            users = steam_detector.get_steam_users(steam_path)
-            if users:
-                user_names = [f"{u.get('persona_name') or u.get('account_name')} (ID: {u.get('account_id')})" for u in users]
-                logger.info(f"Detected {len(users)} local Steam account(s): {', '.join(user_names)}. Applying multi-account injection.")
+            # 3. Step: Depot Key Strategy (depends on active unlocker)
+            #
+            # SteamTools: Depot keys are provided at runtime via Lua setdepotkey()
+            # calls. Injecting them into config.vdf is COUNTERPRODUCTIVE because
+            # Steam validates these entries against Valve's servers on startup.
+            # Unauthorized keys trigger a cleanup cascade that removes ACF files
+            # and library registrations — causing installed games to vanish and
+            # show "Buy" buttons on subsequent restarts.
+            #
+            # GreenLuma / other: May need config.vdf injection as a fallback
+            # since they don't use Lua-based key provision.
+            unlocker = get_unlocker(cfg.active_unlocker or "steamtools")
+            is_steamtools = unlocker and unlocker.identifier == "steamtools"
 
-            # 3. Step: Inject Depot Decryption Keys directly into Steam/config/config.vdf (Global + Multi-Account)
-            self.progress.emit("Depot anahtarları ve hesap kayıtları işleniyor...", 60)
-            KeyInjector.inject_depot_keys_to_config_vdf(steam_path, self.app_info)
+            if is_steamtools:
+                self.progress.emit("Config.vdf'den eski depot anahtarları temizleniyor...", 60)
+                KeyInjector.remove_depot_keys_from_config_vdf(steam_path, self.app_info)
+            else:
+                self.progress.emit("Depot anahtarları konfigürasyona işleniyor...", 60)
+                KeyInjector.inject_depot_keys_to_config_vdf(steam_path, self.app_info)
 
-            # 4. Step: Write ACF Manifest so Steam natively recognizes the game with 'İndir / Yükle' button
-            self.progress.emit("Steam kütüphane kaydı hazırlanıyor...", 75)
-            ACFBuilder.write_acf(
-                app_info=self.app_info,
-                library_path=self.target_library_path or steam_path,
-                steam_path=steam_path,
-                ready_to_install=self.ready_to_install,
-            )
+            # 4. Step: ACF Handling
+            # If the game is already downloaded on disk, update/preserve its installed ACF.
+            # If the game is NOT downloaded yet, do NOT write a fake downloading ACF (StateFlags 1026)
+            # which would force Steam to queue/start downloading immediately.
+            # The SteamTools Lua hook (addappid) will present the game quietly in the library.
+            if game_already_downloaded:
+                self.progress.emit("Mevcut kurulum korunuyor, depot bilgileri güncelleniyor...", 75)
+                logger.info(
+                    f"AppID {self.app_info.app_id} is already downloaded on disk. "
+                    f"Merging updated depot info into existing ACF."
+                )
+                ACFBuilder.write_acf(
+                    app_info=self.app_info,
+                    library_path=self.target_library_path,
+                    steam_path=steam_path,
+                    state_flags=4,  # StateFullyInstalled
+                    merge_if_exists=True,
+                    backup_existing=True,
+                )
+            else:
+                self.progress.emit("Kilit açıcı kütüphane kaydı hazırlanıyor...", 75)
+                logger.info(
+                    f"AppID {self.app_info.app_id} is not downloaded yet. "
+                    f"Skipping auto-download ACF creation so the game rests quietly in the library."
+                )
 
             # 5. Step: Inject via Active Unlocker (SteamTools / GreenLuma Hook)
             self.progress.emit("Kilit açıcı adaptörü uygulanıyor...", 85)
-            unlocker = get_unlocker(cfg.active_unlocker or "steamtools")
             if unlocker:
-                if hasattr(unlocker, "ensure_steamtools_running"):
-                    unlocker.ensure_steamtools_running(steam_path)
                 unlocker.inject_game(steam_path, self.app_info, self.package)
 
-            # 6. Step: Restart Steam
+            # 6. Step: Restart Steam and wait for full initialization
             if cfg.auto_restart_steam:
-                self.progress.emit("Steam yeniden başlatılıyor ve kilit motoru bağlanıyor...", 90)
-                if unlocker and hasattr(unlocker, "ensure_steamtools_running"):
-                    unlocker.ensure_steamtools_running(steam_path)
+                self.progress.emit("Steam yeniden başlatılıyor...", 88)
                 SteamProcessManager.start_steam(steam_path)
-                self.progress.emit("Steam kütüphanesi yükleniyor...", 95)
-                QThread.msleep(4500)
 
-            # 7. Step: Focus Steam Library and trigger installation dialog cleanly
-            self.progress.emit("Steam kütüphanesine yönlendiriliyor...", 98)
-            SteamProcessManager.trigger_open_library()
-            QThread.msleep(1200)
-            SteamProcessManager.trigger_install(self.app_info.app_id)
+                self.progress.emit("Steam'in başlaması bekleniyor...", 95)
+                steam_ready = SteamProcessManager.wait_until_ready(timeout_seconds=30)
+                if not steam_ready:
+                    logger.warning("Steam did not become fully ready in time, proceeding anyway.")
 
+            # 7. Step: Complete without auto-install or store popups
             self.progress.emit("Tamamlandı!", 100)
-            self.finished.emit(
-                True,
-                f"'{self.app_info.name}' (AppID: {self.app_info.app_id}) Steam kütüphanenize başarıyla eklendi!\n\n"
-                f"Steam kütüphaneniz doğrudan açılarak indirme penceresi başlatılmıştır.\n\n"
-                f"💡 Not: Lisans hatası almamak için arka planda SteamTools kilit motorunun açık kalması yeterlidir."
-            )
+
+            if game_already_downloaded:
+                self.finished.emit(
+                    True,
+                    f"'{self.app_info.name}' (AppID: {self.app_info.app_id}) Steam kütüphanenizde güncellendi.\n\n"
+                    f"Oyun kütüphanenizde hazır durumdadır. Dilediğiniz zaman Steam üzerinden başlatabilirsiniz."
+                )
+            else:
+                self.finished.emit(
+                    True,
+                    f"'{self.app_info.name}' (AppID: {self.app_info.app_id}) Steam kütüphanenize eklendi!\n\n"
+                    f"Oyun sessizce kütüphanenize yerleştirildi. İndirmek istediğiniz zaman Steam kütüphanenizden 'Yükle' butonuna basabilirsiniz."
+                )
 
         except Exception as e:
             logger.error(f"Error during game injection pipeline: {e}")
             self.finished.emit(False, f"Aktarım hatası: {e}")
+
+    @staticmethod
+    def _is_game_downloaded(steam_path: Path, app_id: int, install_dir_name: str) -> bool:
+        """Check whether the game is already downloaded by inspecting ACF state and disk contents.
+
+        Returns True if:
+        - An ACF exists with BytesDownloaded > 0, OR
+        - The game's install directory under steamapps/common/ contains files
+        """
+        steamapps_dirs = [steam_path / "steamapps"]
+
+        # Also check additional library folders
+        for vdf_name in ["steamapps/libraryfolders.vdf", "config/libraryfolders.vdf"]:
+            vdf_file = steam_path / vdf_name
+            if not vdf_file.exists():
+                continue
+            try:
+                from src.steam.vdf_parser import parse_vdf_file
+                data = parse_vdf_file(vdf_file)
+                lib_root = data.get("libraryfolders") or data.get("LibraryFolders") or {}
+                if isinstance(lib_root, dict):
+                    for _k, v in lib_root.items():
+                        if isinstance(v, dict) and v.get("path"):
+                            extra_dir = Path(v["path"]) / "steamapps"
+                            if extra_dir not in steamapps_dirs:
+                                steamapps_dirs.append(extra_dir)
+            except Exception:
+                pass
+
+        for s_dir in steamapps_dirs:
+            # Check ACF
+            acf = s_dir / f"appmanifest_{app_id}.acf"
+            if acf.exists():
+                try:
+                    from src.steam.vdf_parser import parse_vdf_file
+                    acf_data = parse_vdf_file(acf)
+                    app_state = acf_data.get("AppState", {})
+                    bytes_dl = int(app_state.get("BytesDownloaded", "0") or "0")
+                    if bytes_dl > 0:
+                        return True
+                except Exception:
+                    pass
+
+            # Check install directory on disk
+            if install_dir_name:
+                common_dir = s_dir / "common" / install_dir_name
+                try:
+                    if common_dir.exists() and any(common_dir.iterdir()):
+                        return True
+                except Exception:
+                    pass
+
+        return False
 
 
 class HealthCheckWorker(QThread):

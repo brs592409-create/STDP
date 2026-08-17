@@ -1,5 +1,5 @@
 {
-  "steam_path": "c:\\program files (x86)\\steam",
+  "steam_path": null,
   "selected_library_path": null,
   "active_unlocker": "steamtools",
   "auto_shutdown_steam": true,
@@ -9,5 +9,5 @@
   "theme": "steam_dark",
   "log_level": "INFO",
   "downloads_dir": null,
-  "onlinefix_login_prompt_shown": false
+  "onlinefix_login_prompt_shown": true
 }

@@ -155,28 +155,27 @@ class OnlineFixView(QWidget):
         # 0. Prominent Login Reminder Banner
         self.login_notice_banner = QFrame(self)
         self.login_notice_banner.setStyleSheet(
-            "background-color: #24190b; border: 2px solid #f9a825; border-radius: 8px; padding: 8px 14px;"
+            "background-color: #24190b; border: 2px solid #f9a825; border-radius: 8px; padding: 6px 12px;"
         )
         banner_layout = QHBoxLayout(self.login_notice_banner)
-        banner_layout.setContentsMargins(12, 8, 12, 8)
-        banner_layout.setSpacing(14)
+        banner_layout.setContentsMargins(10, 8, 10, 8)
+        banner_layout.setSpacing(12)
 
         icon_lbl = QLabel("⚠️", self.login_notice_banner)
-        icon_lbl.setStyleSheet("font-size: 26px;")
+        icon_lbl.setStyleSheet("font-size: 24px;")
 
         msg_lbl = QLabel(
-            "<b style='color: #f9a825; font-size: 13.5px; letter-spacing: 0.5px;'>ONLINE-FIX KULLANABİLMEK İÇİN MUHAKKAK HESAP GİRİŞİ YAPMALISINIZ BURADAKİ ARAYÜZDEN</b><br>"
-            "<span style='color: #e2d2ba; font-size: 12px;'>Online-Fix.me üzerinden indirme linklerini görebilmek ve dosyaları sorunsuz indirebilmek için sitede aktif bir hesabınızın açık olması gerekir. "
-            "Sağ taraftaki dahili tarayıcıdan kendi hesabınızla <b>1 kez</b> giriş yapmanız yeterlidir; oturumunuz STDP içinde <b>kalıcı olarak</b> kaydedilecektir.</span>",
+            "<b style='color: #f9a825; font-size: 14px;'>📢 DİKKAT: LÜTFEN ONLINE-FIX'E BİR HESAPLA GİRİŞ YAPIN!</b><br>"
+            "<span style='color: #e2d2ba; font-size: 12px;'>Online-Fix.me üzerinden dosyaları sorunsuz indirebilmek için sitede bir hesabınızın açık olması gerekir. "
+            "Sağdaki dahili tarayıcıdan kendi hesabınızla sadece <b>1 kez</b> giriş yapmanız yeterlidir; oturumunuz STDP içinde <b>kalıcı olarak</b> kaydedilecektir.</span>",
             self.login_notice_banner,
         )
         msg_lbl.setWordWrap(True)
 
-        self.btn_dismiss_login = QPushButton("✕ Bir daha gösterme", self.login_notice_banner)
+        self.btn_dismiss_login = QPushButton("✕ Anladım, Giriş Yapacağım", self.login_notice_banner)
         self.btn_dismiss_login.setStyleSheet(
-            "background-color: #f9a825; color: #101822; font-weight: bold; font-size: 12px; padding: 8px 16px; border-radius: 5px;"
+            "background-color: #f9a825; color: #101822; font-weight: bold; font-size: 12px; padding: 7px 16px; border-radius: 5px;"
         )
-        self.btn_dismiss_login.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_dismiss_login.clicked.connect(self._dismiss_login_notice)
 
         banner_layout.addWidget(icon_lbl)

@@ -37,8 +37,8 @@ class ArchiveExtractor:
             return self._extract_zip(path)
 
         # If it is a RAR or 7z archive
-        elif path.suffix.lower() in [".rar", ".7z"]:
-            return self._extract_rar_or_7z(path)
+        elif path.suffix.lower() in [".rar", ".7z", ".tar", ".gz"]:
+            return self._extract_generic_archive(path)
 
         # If it is a raw .manifest file
         elif path.suffix.lower() == ".manifest":
@@ -65,18 +65,27 @@ class ArchiveExtractor:
 
         return self._process_extracted_directory(target_dir, source_archive=zip_path)
 
-    def _extract_rar_or_7z(self, archive_path: Path) -> GamePackage:
-        """Unpack RAR/7Z archive using OnlineFixInstaller engine and analyze its contents."""
-        from src.onlinefix.installer import OnlineFixInstaller
+    def _extract_generic_archive(self, archive_path: Path) -> GamePackage:
+        """Unpack .rar, .7z or other archives using bundled 7-Zip binaries."""
+        import shutil
+        import subprocess
+
         target_dir = self.extract_root / f"{archive_path.stem}_{int(os.path.getmtime(archive_path))}"
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        installer = OnlineFixInstaller()
-        success, msg = installer.extract_archive(archive_path, target_dir)
-        if not success:
-            raise RuntimeError(f"Archive extraction failed: {msg}")
+        project_root = Path(__file__).resolve().parent.parent.parent
+        seven_zip_candidates = [
+            project_root / "bundled_installers" / "7z.exe",
+            project_root / "bundled_installers" / "7za.exe",
+            Path(r"C:\Program Files\7-Zip\7z.exe"),
+            Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
+        ]
+        seven_zip = next((p for p in seven_zip_candidates if p.exists()), None)
+        if seven_zip:
+            subprocess.run([str(seven_zip), "x", str(archive_path), f"-o{str(target_dir)}", "-y"], check=True)
+            return self._process_extracted_directory(target_dir, source_archive=archive_path)
 
-        return self._process_extracted_directory(target_dir, source_archive=archive_path)
+        raise RuntimeError(f"Cannot extract {archive_path.suffix}: 7-Zip extractor not found in bundled_installers.")
 
     def _process_extracted_directory(
         self, directory: Path, source_archive: Optional[Path] = None

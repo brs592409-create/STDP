@@ -123,7 +123,14 @@ class ACFBuilder:
             int(d.get("size", 0)) for d in installed_depots.values() if isinstance(d, dict)
         )
         app_state["BytesToDownload"] = str(total_size)
-        app_state["BytesDownloaded"] = "0"
+
+        # Preserve existing BytesDownloaded if game was already downloaded.
+        # Resetting this to "0" would make Steam think the game needs to be
+        # re-downloaded, causing installed games to lose their "Play" state.
+        existing_bytes_dl = int(app_state.get("BytesDownloaded", "0") or "0")
+        if existing_bytes_dl <= 0:
+            app_state["BytesDownloaded"] = "0"
+        # else: keep the existing BytesDownloaded value untouched
 
         return {"AppState": app_state}
 
@@ -208,13 +215,6 @@ class ACFBuilder:
         steamapps_dir = lib / "steamapps" if (lib / "steamapps").exists() or lib.name != "steamapps" else lib
         steamapps_dir.mkdir(parents=True, exist_ok=True)
 
-        # Ensure physical game folder in steamapps/common exists so Steam treats it as persistent on restart
-        common_dir = steamapps_dir / "common" / app_info.safe_install_dir
-        try:
-            common_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.debug(f"Could not create common folder {common_dir}: {e}")
-
         acf_file = steamapps_dir / f"appmanifest_{app_info.app_id}.acf"
 
         if acf_file.exists() and merge_if_exists:
@@ -253,15 +253,21 @@ class ACFBuilder:
         return acf_file
 
     @staticmethod
-    def prepare_uninstalled_library_entry(
+    def remove_app_manifest_and_registration(
         steam_path: Union[Path, str],
         app_id: int,
     ) -> None:
-        """Remove any stale ACF files and ensure AppID is registered with size 0 in libraryfolders.vdf so it appears on first startup."""
+        """Remove any fake ACF files and libraryfolders entries so Steam displays the clean 'YÜKLE' (Install) button.
+
+        IMPORTANT: This method now checks whether the game has already been
+        downloaded before removing the ACF. If it detects that the game files
+        are present on disk, the ACF and library registration are preserved to
+        avoid breaking an existing installation.
+        """
         sp = Path(steam_path)
         candidate_dirs = [sp / "steamapps"]
 
-        # Check all possible libraryfolders.vdf locations
+        # Check all possible libraryfolders.vdf locations for additional library paths
         vdf_candidates = [
             sp / "steamapps" / "libraryfolders.vdf",
             sp / "config" / "libraryfolders.vdf",
@@ -273,13 +279,21 @@ class ACFBuilder:
                 data = parse_vdf_file(vdf_file)
                 lib_root = data.get("libraryfolders") or data.get("LibraryFolders") or {}
                 if isinstance(lib_root, dict):
+                    updated = False
                     for folder_key, folder_val in lib_root.items():
                         if isinstance(folder_val, dict):
                             f_path = folder_val.get("path")
                             if f_path:
                                 candidate_dirs.append(Path(f_path) / "steamapps")
+                            apps_dict = folder_val.get("apps")
+                            if isinstance(apps_dict, dict) and str(app_id) in apps_dict:
+                                del apps_dict[str(app_id)]
+                                updated = True
+                    if updated:
+                        dump_vdf_file(vdf_file, data)
+                        logger.info(f"Cleaned AppID {app_id} from {vdf_file}")
             except Exception as e:
-                logger.warning(f"Error reading libraryfolders for AppID {app_id}: {e}")
+                logger.warning(f"Error cleaning libraryfolders for AppID {app_id}: {e}")
 
         # Deduplicate candidate directories
         unique_dirs = []
@@ -287,28 +301,35 @@ class ACFBuilder:
             if d not in unique_dirs:
                 unique_dirs.append(d)
 
-        # 1. Remove stale ACF files so Steam displays 'YÜKLE' (Download) button
         for s_dir in unique_dirs:
             acf = s_dir / f"appmanifest_{app_id}.acf"
             if acf.exists():
+                # ── Guard: do NOT delete ACF for games already downloaded ──
+                try:
+                    acf_data = parse_vdf_file(acf)
+                    app_state = acf_data.get("AppState", {})
+                    bytes_downloaded = int(app_state.get("BytesDownloaded", "0") or "0")
+                    install_dir_name = app_state.get("installdir", "")
+
+                    # Check if game files actually exist on disk
+                    game_installed_on_disk = False
+                    if install_dir_name:
+                        common_dir = s_dir / "common" / install_dir_name
+                        if common_dir.exists() and any(common_dir.iterdir()):
+                            game_installed_on_disk = True
+
+                    if bytes_downloaded > 0 or game_installed_on_disk:
+                        logger.info(
+                            f"Skipping ACF removal for AppID {app_id}: game is already downloaded "
+                            f"(BytesDownloaded={bytes_downloaded}, files_on_disk={game_installed_on_disk}). "
+                            f"Preserving existing installation record."
+                        )
+                        continue
+                except Exception as parse_err:
+                    logger.debug(f"Could not parse ACF to check download state, proceeding with removal: {parse_err}")
+
                 try:
                     acf.unlink()
                     logger.info(f"Removed uninstalled ACF: {acf}")
                 except Exception as e:
                     logger.warning(f"Failed to remove ACF {acf}: {e}")
-
-        # 2. Register in libraryfolders.vdf with total_size=0 so Steam immediately recognizes the title
-        ACFBuilder.register_in_libraryfolders(
-            steam_path=steam_path,
-            library_path=sp / "steamapps",
-            app_id=app_id,
-            total_size=0,
-        )
-
-    @staticmethod
-    def remove_app_manifest_and_registration(
-        steam_path: Union[Path, str],
-        app_id: int,
-    ) -> None:
-        """Remove any fake ACF files and libraryfolders entries."""
-        ACFBuilder.prepare_uninstalled_library_entry(steam_path=steam_path, app_id=app_id)

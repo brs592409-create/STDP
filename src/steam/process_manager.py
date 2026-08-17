@@ -83,7 +83,8 @@ class SteamProcessManager:
         start_time = time.time()
         while time.time() - start_time < timeout_seconds:
             if not SteamProcessManager.is_running():
-                logger.info("Steam shut down successfully.")
+                time.sleep(0.6)  # Grace period for Windows to fully release file locks on config.vdf
+                logger.info("Steam shut down successfully and file locks released.")
                 return True
             time.sleep(0.5)
 
@@ -162,23 +163,8 @@ class SteamProcessManager:
         return SteamProcessManager.start_steam(steam_path=steam_path, extra_args=extra_args)
 
     @staticmethod
-    def trigger_open_library() -> bool:
-        """Open and focus the Steam Library view cleanly without store redirects."""
-        uri = "steam://open/games"
-        logger.info(f"Triggering Steam library view URI: {uri}")
-        try:
-            if sys.platform == "win32":
-                os.startfile(uri)  # type: ignore[attr-defined]
-            else:
-                subprocess.Popen(["xdg-open", uri])
-            return True
-        except Exception as e:
-            logger.error(f"Failed to open Steam library view: {e}")
-            return False
-
-    @staticmethod
     def trigger_nav_game(app_id: int) -> bool:
-        """Open and focus the game in Steam Library."""
+        """Open and focus the game in Steam Library without triggering purchase store modal."""
         uri = f"steam://nav/games/details/{app_id}"
         logger.info(f"Triggering Steam library navigation URI: {uri}")
         try:
@@ -220,6 +206,58 @@ class SteamProcessManager:
         except Exception as e:
             logger.error(f"Failed to trigger validate URI for AppID {app_id}: {e}")
             return False
+
+    @staticmethod
+    def wait_until_ready(
+        timeout_seconds: int = 30,
+        poll_interval: float = 1.0,
+    ) -> bool:
+        """Wait until Steam is fully initialized by checking for steamwebhelper.exe.
+
+        Steam's UI and plugin system (including SteamTools hook) are only
+        operational once steamwebhelper.exe is running. This method polls for
+        that process, giving the hook enough time to load Lua scripts and
+        register owned games before any steam:// URI commands are triggered.
+
+        Returns True if Steam became ready within the timeout, False otherwise.
+        """
+        start_time = time.time()
+        webhelper_seen = False
+
+        logger.info(f"Waiting up to {timeout_seconds}s for Steam to fully initialize (steamwebhelper)...")
+
+        while time.time() - start_time < timeout_seconds:
+            # First check that steam.exe itself is still running
+            if not SteamProcessManager.is_running():
+                time.sleep(poll_interval)
+                continue
+
+            # Look for steamwebhelper.exe which signals the UI layer is up
+            for proc in psutil.process_iter(["name"]):
+                try:
+                    name = proc.info.get("name", "")
+                    if name and name.lower() == "steamwebhelper.exe":
+                        webhelper_seen = True
+                        break
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+            if webhelper_seen:
+                # Give an extra grace period for SteamTools hook to load Lua scripts
+                # after the UI layer is up
+                grace_seconds = 5.0
+                logger.info(
+                    f"steamwebhelper.exe detected. Waiting {grace_seconds}s grace period "
+                    f"for SteamTools hook to initialize..."
+                )
+                time.sleep(grace_seconds)
+                logger.info("Steam is considered fully ready.")
+                return True
+
+            time.sleep(poll_interval)
+
+        logger.warning(f"Steam did not become fully ready within {timeout_seconds} seconds.")
+        return False
 
 
 # Global singleton instance

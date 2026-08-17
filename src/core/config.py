@@ -113,6 +113,11 @@ class ConfigManager:
                 self.save()
             except Exception:
                 pass
+
+        # Validate that steam_path actually exists if set; if not, reset to None for dynamic detection
+        if self._config.steam_path and not Path(self._config.steam_path).exists():
+            self._config.steam_path = None
+
         return self._config
 
     def save(self) -> None:

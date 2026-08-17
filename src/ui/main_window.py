@@ -188,24 +188,5 @@ class MainWindow(QMainWindow):
                 "border-radius: 4px; padding: 3px 8px;"
             )
 
-        active_unl = config_manager.config.active_unlocker or "steamtools"
-        if active_unl == "steamtools":
-            from src.unlockers.steamtools_adapter import SteamToolsAdapter
-            if SteamToolsAdapter.is_steamtools_running():
-                self.hook_badge.setText("Kanca: STEAMTOOLS (Aktif)")
-                self.hook_badge.setStyleSheet(
-                    "background-color: #1b384c; color: #57cb65; border: 1px solid #57cb65; "
-                    "border-radius: 4px; padding: 3px 8px; font-weight: bold;"
-                )
-            else:
-                self.hook_badge.setText("Kanca: STEAMTOOLS (Kapalı)")
-                self.hook_badge.setStyleSheet(
-                    "background-color: #2b2512; color: #f9a825; border: 1px solid #f9a825; "
-                    "border-radius: 4px; padding: 3px 8px;"
-                )
-        else:
-            self.hook_badge.setText(f"Kanca: {active_unl.upper()}")
-            self.hook_badge.setStyleSheet(
-                "background-color: #172332; color: #66c0f4; border: 1px solid #2a425f; "
-                "border-radius: 4px; padding: 3px 8px;"
-            )
+        active_unl = config_manager.config.active_unlocker
+        self.hook_badge.setText(f"Kanca: {active_unl.upper()}")

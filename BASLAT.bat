@@ -6,6 +6,16 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 title STDP - Steam Tool Depotbox Pipeline (Portable)
 
+:: ---------------------------------------------------------------------
+:: 0. ADIM: Yonetici Izinleri Kontrolu ve Otomatik Yukseltme (UAC)
+:: ---------------------------------------------------------------------
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [..] Yonetici izinleri talep ediliyor, lutfen acilan pencereye EVET deyin...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 echo.
 echo ===================================================================
 echo     STDP (Steam Tool Depotbox Pipeline) - Portable Baslatici
@@ -62,49 +72,36 @@ if not defined PYTHON_EXE (
 echo [OK] Portable Python motoru aktif: "%PYTHON_EXE%"
 
 :: ---------------------------------------------------------------------
-:: 2. ADIM: SteamTools Kilit Motoru Kontrolu ve Baslatma
+:: 2. ADIM: SteamTools Kurulum Kontrolu
 :: ---------------------------------------------------------------------
 echo.
-echo [2/3] SteamTools kilit motoru kontrol ediliyor...
+echo [2/3] SteamTools kontrol ediliyor...
 
-set "ST_EXE="
-if exist "C:\Program Files (x86)\SteamTools\SteamTools.exe" set "ST_EXE=C:\Program Files (x86)\SteamTools\SteamTools.exe"
-if exist "C:\Program Files\SteamTools\SteamTools.exe" set "ST_EXE=C:\Program Files\SteamTools\SteamTools.exe"
-if exist "%LOCALAPPDATA%\Programs\SteamTools\SteamTools.exe" set "ST_EXE=%LOCALAPPDATA%\Programs\SteamTools\SteamTools.exe"
-if exist "%LOCALAPPDATA%\SteamTools\SteamTools.exe" set "ST_EXE=%LOCALAPPDATA%\SteamTools\SteamTools.exe"
-if exist "%APPDATA%\SteamTools\SteamTools.exe" set "ST_EXE=%APPDATA%\SteamTools\SteamTools.exe"
+set "ST_INSTALLED=0"
+if exist "%APPDATA%\SteamTools" set "ST_INSTALLED=1"
+if exist "%LOCALAPPDATA%\Programs\SteamTools" set "ST_INSTALLED=1"
+if exist "C:\Program Files (x86)\SteamTools" set "ST_INSTALLED=1"
+if exist "C:\Program Files\SteamTools" set "ST_INSTALLED=1"
+if exist ".steamtools_installed" set "ST_INSTALLED=1"
 
-if not defined ST_EXE (
+if "!ST_INSTALLED!"=="1" (
+    echo [OK] SteamTools zaten kurulu.
+) else (
     set "ST_SETUP="
     if exist "%~dp0st-setup-1.8.30.exe" set "ST_SETUP=%~dp0st-setup-1.8.30.exe"
     if exist "%~dp0bundled_installers\st-setup-1.8.30.exe" set "ST_SETUP=%~dp0bundled_installers\st-setup-1.8.30.exe"
 
     if defined ST_SETUP (
-        echo [..] SteamTools ilk kez kuruluyor, lutfen bekleyin...
+        echo [..] SteamTools otomatik kuruluyor, lutfen bekleyin...
         powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '!ST_SETUP!' -ArgumentList '/S' -Verb RunAs -Wait" 2>nul
         if errorlevel 1 (
             start /wait "" "!ST_SETUP!" /S
         )
         echo [OK] SteamTools kurulumu tamamlandi.
-        
-        if exist "C:\Program Files (x86)\SteamTools\SteamTools.exe" set "ST_EXE=C:\Program Files (x86)\SteamTools\SteamTools.exe"
-        if exist "C:\Program Files\SteamTools\SteamTools.exe" set "ST_EXE=C:\Program Files\SteamTools\SteamTools.exe"
-        if exist "%LOCALAPPDATA%\Programs\SteamTools\SteamTools.exe" set "ST_EXE=%LOCALAPPDATA%\Programs\SteamTools\SteamTools.exe"
-        if exist "%LOCALAPPDATA%\SteamTools\SteamTools.exe" set "ST_EXE=%LOCALAPPDATA%\SteamTools\SteamTools.exe"
+        echo 1 > ".steamtools_installed"
+    ) else (
+        echo [!] st-setup-1.8.30.exe bulunamadi, SteamTools adimi atlandi.
     )
-)
-
-:: SteamTools.exe'nin calisip calismadigini kontrol et ve arka planda baslat
-if defined ST_EXE (
-    tasklist /fi "imagename eq SteamTools.exe" 2>nul | find /i "SteamTools.exe" >nul
-    if errorlevel 1 (
-        echo [..] SteamTools kilit motoru arka planda baslatiliyor...
-        start "" "!ST_EXE!"
-        timeout /t 2 /nobreak >nul
-    )
-    echo [OK] SteamTools kilit motoru aktif.
-) else (
-    echo [!] SteamTools bulunamadi. STDP arayuzunden 'Teshis ^& Saglik' sekmesini kullanarak kurabilirsiniz.
 )
 
 if not exist "logs" mkdir "logs"

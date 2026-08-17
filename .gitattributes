@@ -1,4 +1,7 @@
 *.dll filter=lfs diff=lfs merge=lfs -text
 *.pyd filter=lfs diff=lfs merge=lfs -text
 *.zip filter=lfs diff=lfs merge=lfs -text
+*.pak filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
 python_runtime/Lib/site-packages/PyQt6/Qt6/bin/* filter=lfs diff=lfs merge=lfs -text
+

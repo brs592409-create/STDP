@@ -6,8 +6,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
-import sys
 import tempfile
 import time
 import zipfile
@@ -61,8 +59,6 @@ class OnlineFixInstaller:
         b"onlinefix.me",
         b"Online-Fix.me",
         b"online-fix",
-        b"cs.rin.ru",
-        b"freerobux",
         b"",
     ]
 
@@ -157,73 +153,68 @@ class OnlineFixInstaller:
         return installed_games
 
     def detect_game_structure(self, game_dir: Path) -> Tuple[str, Optional[str], Optional[Path]]:
-        """Detect the game engine, primary game executable, and anchor subfolder."""
-        engine = "Generic"
-        primary_exe: Optional[str] = None
-        anchor_subfolder: Optional[Path] = None
+        """Detect game engine, primary executable, and steam_api64.dll anchor folder."""
+        steam_api_path: Optional[Path] = None
+        all_exes: List[Path] = []
+        is_unreal = False
+        is_unity = False
 
-        # 1. Unreal Engine detection: Binaries/Win64/*.exe and Binaries/Win64/steam_api64.dll
-        unreal_bin64 = game_dir / "Binaries" / "Win64"
-        if unreal_bin64.exists() and unreal_bin64.is_dir():
-            engine = "Unreal Engine"
-            anchor_subfolder = Path("Binaries/Win64")
-            # Find Shipping executable or main exe inside Win64
-            for exe in unreal_bin64.glob("*.exe"):
-                if not any(re.search(pat, exe.name) for pat in self.EXCLUDED_EXE_PATTERNS):
-                    primary_exe = exe.name
-                    break
-
-        # Check for nested Unreal project folder: <ProjectName>/Binaries/Win64
-        if engine != "Unreal Engine":
-            for child in game_dir.iterdir():
-                if child.is_dir():
-                    nested_bin64 = child / "Binaries" / "Win64"
-                    if nested_bin64.exists() and nested_bin64.is_dir():
-                        engine = "Unreal Engine"
-                        anchor_subfolder = nested_bin64.relative_to(game_dir)
-                        for exe in nested_bin64.glob("*.exe"):
-                            if not any(re.search(pat, exe.name) for pat in self.EXCLUDED_EXE_PATTERNS):
-                                primary_exe = exe.name
-                                break
-                        break
-
-        # 2. Unity Engine detection: UnityPlayer.dll or UnityCrashHandler64.exe or *_Data folder
-        if engine == "Generic":
-            if (game_dir / "UnityPlayer.dll").exists() or any(game_dir.glob("*_Data")):
-                engine = "Unity Engine"
-                anchor_subfolder = Path(".")
-                # Main executable is typically named same as *_Data prefix or root exe
-                for exe in game_dir.glob("*.exe"):
-                    if not any(re.search(pat, exe.name) for pat in self.EXCLUDED_EXE_PATTERNS):
-                        primary_exe = exe.name
-                        break
-
-        # 3. Native / Steamworks direct detection
-        if engine == "Generic":
-            # Search for steam_api64.dll or steam_api.dll anywhere within 3 directory levels
-            for root, _, files in os.walk(game_dir):
-                rel_root = Path(root).relative_to(game_dir)
-                if len(rel_root.parts) > 3:
+        try:
+            for root, dirs, files in os.walk(game_dir):
+                if self.backup_dir_name in root:
                     continue
+
+                r_path = Path(root)
+                rel_root = r_path.relative_to(game_dir)
+
                 for f in files:
-                    if f.lower() in ["steam_api64.dll", "steam_api.dll"]:
-                        anchor_subfolder = rel_root if str(rel_root) != "." else Path(".")
-                        engine = "Native / Custom"
-                        break
-                if engine != "Generic":
-                    break
+                    f_lower = f.lower()
+                    if f_lower in ["steam_api64.dll", "steam_api.dll"]:
+                        steam_api_path = rel_root
 
-        # Fallback primary exe search if still not found
-        if not primary_exe:
-            for exe in game_dir.glob("*.exe"):
-                if not any(re.search(pat, exe.name) for pat in self.EXCLUDED_EXE_PATTERNS):
-                    primary_exe = exe.name
-                    break
+                    if f_lower.endswith(".exe"):
+                        is_excluded = any(re.search(pat, f_lower) for pat in self.EXCLUDED_EXE_PATTERNS)
+                        if not is_excluded:
+                            all_exes.append(r_path / f)
 
-        return engine, primary_exe, anchor_subfolder
+                    if "unityplayer.dll" in f_lower:
+                        is_unity = True
+                    if "unrealloading" in f_lower or f_lower.endswith("-win64-shipping.exe"):
+                        is_unreal = True
+
+                # Check dirs for engine signatures
+                for d in dirs:
+                    d_lower = d.lower()
+                    if d_lower == "binaries":
+                        is_unreal = True
+                    if d_lower.endswith("_data"):
+                        is_unity = True
+
+        except Exception as e:
+            logger.debug(f"Error inspecting structure of {game_dir}: {e}")
+
+        # Determine engine
+        if is_unreal:
+            engine = "Unreal Engine"
+        elif is_unity:
+            engine = "Unity"
+        else:
+            engine = "Custom/Native"
+
+        # Determine primary exe
+        primary_exe: Optional[str] = None
+        if all_exes:
+            # Sort by file size descending (main game binary is usually the largest)
+            try:
+                all_exes.sort(key=lambda x: x.stat().st_size if x.exists() else 0, reverse=True)
+                primary_exe = all_exes[0].name
+            except Exception:
+                primary_exe = all_exes[0].name
+
+        return engine, primary_exe, steam_api_path
 
     def check_game_fix_status(self, game_dir: Path) -> Tuple[bool, List[str], bool]:
-        """Check if game folder currently has OnlineFix files installed and if backup exists."""
+        """Check if a game folder currently contains OnlineFix files and backups."""
         if not game_dir.exists():
             return False, [], False
 
@@ -246,194 +237,127 @@ class OnlineFixInstaller:
 
         return len(found_files) > 0, found_files, backup_exists
 
-    @staticmethod
-    def get_unrar_candidates() -> List[Path]:
-        """Return list of candidate UnRAR / WinRAR executables in priority order for current OS."""
-        candidates: List[Path] = []
-        is_windows = os.name == "nt"
-
-        if is_windows:
-            win_paths = [
-                Path(__file__).resolve().parent.parent.parent / "bundled_installers" / "UnRAR.exe",
-                Path(__file__).resolve().parent.parent.parent / "UnRAR.exe",
-                Path(sys.executable).parent / "bundled_installers" / "UnRAR.exe",
-                Path(sys.executable).parent / "UnRAR.exe",
-                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "WinRAR" / "UnRAR.exe",
-                Path(r"C:\Program Files\WinRAR\UnRAR.exe"),
-                Path(r"C:\Program Files (x86)\WinRAR\UnRAR.exe"),
-                Path(r"C:\Program Files\WinRAR\WinRAR.exe"),
-                Path(r"C:\Program Files (x86)\WinRAR\WinRAR.exe"),
-            ]
-            if hasattr(sys, "_MEIPASS"):
-                win_paths.insert(0, Path(sys._MEIPASS) / "bundled_installers" / "UnRAR.exe")
-                win_paths.insert(1, Path(sys._MEIPASS) / "UnRAR.exe")
-
-            for p in win_paths:
-                if p.exists() and p not in candidates:
-                    candidates.append(p)
-
-        # Also search PATH
-        for name in ["unrar", "UnRAR", "winrar", "WinRAR"]:
-            found = shutil.which(name)
-            if found:
-                p = Path(found)
-                if p not in candidates:
-                    candidates.append(p)
-
-        return candidates
-
-    @staticmethod
-    def get_7z_candidates() -> List[Path]:
-        """Return list of candidate 7-Zip executables in priority order for current OS."""
-        candidates: List[Path] = []
-        is_windows = os.name == "nt"
-
-        if is_windows:
-            win_paths = [
-                Path(__file__).resolve().parent.parent.parent / "bundled_installers" / "7za.exe",
-                Path(__file__).resolve().parent.parent.parent / "bundled_installers" / "7z.exe",
-                Path(sys.executable).parent / "bundled_installers" / "7za.exe",
-                Path(sys.executable).parent / "bundled_installers" / "7z.exe",
-                Path(r"C:\Program Files\7-Zip\7z.exe"),
-                Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
-            ]
-            if hasattr(sys, "_MEIPASS"):
-                win_paths.insert(0, Path(sys._MEIPASS) / "bundled_installers" / "7za.exe")
-                win_paths.insert(1, Path(sys._MEIPASS) / "bundled_installers" / "7z.exe")
-
-            for p in win_paths:
-                if p.exists() and p not in candidates:
-                    candidates.append(p)
-
-        for name in ["7z", "7za", "7zr"]:
-            found = shutil.which(name)
-            if found:
-                p = Path(found)
-                if p not in candidates:
-                    candidates.append(p)
-
-        return candidates
-
-    @classmethod
-    def find_unrar_executable(cls) -> Optional[Path]:
-        """Find the primary UnRAR executable."""
-        cands = cls.get_unrar_candidates()
-        return cands[0] if cands else None
-
-    @classmethod
-    def find_7z_executable(cls) -> Optional[Path]:
-        """Find the primary 7-Zip executable."""
-        cands = cls.get_7z_candidates()
-        return cands[0] if cands else None
-
     def extract_archive(self, archive_path: Path, temp_dest: Path) -> Tuple[bool, str]:
         """Extract a zip/rar/7z archive handling standard online-fix.me passwords."""
         temp_dest.mkdir(parents=True, exist_ok=True)
 
-        extra_kwargs = {
-            "stdin": subprocess.DEVNULL,
-        }
-        if os.name == "nt":
-            extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-
-        ext = archive_path.suffix.lower()
-
-        # 1. If standard ZIP format, try native zipfile first
-        if ext == ".zip":
+        if archive_path.suffix.lower() == ".zip":
             try:
                 with zipfile.ZipFile(archive_path, "r") as zf:
+                    extracted = False
                     for pwd in self.DEFAULT_PASSWORDS:
                         try:
                             zf.extractall(path=temp_dest, pwd=pwd if pwd else None)
-                            if any(temp_dest.iterdir()):
-                                logger.info(f"Extracted {archive_path.name} with password '{pwd.decode() if pwd else 'none'}'")
-                                return True, "Başarıyla ayıklandı."
+                            extracted = True
+                            logger.info(f"Extracted {archive_path.name} with password '{pwd.decode() if pwd else 'none'}'")
+                            break
                         except (RuntimeError, zipfile.BadZipFile):
                             continue
+
+                    if not extracted:
+                        return False, "ZIP arşivi şifreli ve 'online-fix.me' şifresi ile açılamadı."
+                    return True, "Başarıyla ayıklandı."
             except Exception as e:
-                logger.debug(f"Zipfile internal error for {archive_path.name}: {e}. Trying external extractors.")
+                return False, f"ZIP dosyası açılamadı: {e}"
 
-        def try_unrar() -> bool:
-            for unrar_exe in self.get_unrar_candidates():
-                dest_slash = str(temp_dest).rstrip("\\/") + ("\\" if os.name == "nt" else "/")
-                is_winrar_gui = unrar_exe.name.lower() == "winrar.exe"
-                for pwd in self.DEFAULT_PASSWORDS:
-                    pwd_arg = f"-p{pwd.decode()}" if pwd else "-p-"
-                    cmd = [
-                        str(unrar_exe),
-                        "x",
-                        pwd_arg,
-                        "-y",
-                        "-o+",
-                    ]
-                    if is_winrar_gui:
-                        cmd.append("-ibck")
-                    cmd.extend([
-                        str(archive_path),
-                        dest_slash,
-                    ])
-                    try:
-                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60, **extra_kwargs)
-                        if (res.returncode in (0, 1) or any(temp_dest.iterdir())) and any(temp_dest.iterdir()):
-                            logger.info(f"Successfully extracted {archive_path.name} using UnRAR ({unrar_exe}).")
-                            return True
-                    except Exception as e:
-                        logger.debug(f"UnRAR attempt with {unrar_exe} failed: {e}")
-            return False
+        # 2. WinRAR / UnRAR, 7-Zip, and tar.exe support for .rar, .7z, .zip
+        try:
+            import subprocess
 
-        def try_7z() -> bool:
-            for seven_zip_exe in self.get_7z_candidates():
-                for pwd in self.DEFAULT_PASSWORDS:
-                    pwd_str = pwd.decode() if pwd else ""
-                    cmd = [
-                        str(seven_zip_exe),
-                        "x",
-                        str(archive_path),
-                        f"-o{str(temp_dest)}",
-                        "-y",
-                        "-aoa",
-                        f"-p{pwd_str}" if pwd_str else "-p-",
-                    ]
-                    try:
-                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60, **extra_kwargs)
-                        if (res.returncode in (0, 1) or any(temp_dest.iterdir())) and any(temp_dest.iterdir()):
-                            logger.info(f"Successfully extracted {archive_path.name} using 7-Zip ({seven_zip_exe}).")
-                            return True
-                    except Exception as e:
-                        logger.debug(f"7z attempt with {seven_zip_exe} failed: {e}")
-            return False
+            # A. WinRAR / UnRAR (High Priority for .rar)
+            # Project / Runtime bundled 7-Zip binaries
+            project_root = Path(__file__).resolve().parent.parent.parent
+            local_appdata = os.environ.get("LOCALAPPDATA", "")
+            user_profile = os.environ.get("USERPROFILE", "")
 
-        def try_tar() -> bool:
+            # A. 7-Zip CLI (High Priority for .7z, .zip, .rar)
+            seven_zip_paths = [
+                str(project_root / "bundled_installers" / "7za.exe"),
+                str(project_root / "bundled_installers" / "7z.exe"),
+                str(project_root / "bin" / "7za.exe"),
+                str(project_root / "bin" / "7z.exe"),
+                r"C:\Program Files\7-Zip\7z.exe",
+                r"C:\Program Files (x86)\7-Zip\7z.exe",
+                os.path.join(local_appdata, r"Programs\7-Zip\7z.exe") if local_appdata else "",
+                os.path.join(user_profile, r"scoop\shims\7z.exe") if user_profile else "",
+                r"C:\ProgramData\chocolatey\bin\7z.exe",
+                "7z",
+                "7za",
+            ]
+            for seven_zip_exe in seven_zip_paths:
+                if seven_zip_exe and (shutil.which(seven_zip_exe) or Path(seven_zip_exe).exists()):
+                    for pwd in self.DEFAULT_PASSWORDS:
+                        pwd_str = pwd.decode() if pwd else ""
+                        cmd = [
+                            str(seven_zip_exe),
+                            "x",
+                            str(archive_path),
+                            f"-o{str(temp_dest)}",
+                            f"-p{pwd_str}",
+                            "-y",
+                        ]
+                        try:
+                            res = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                            if res.returncode == 0 and any(temp_dest.iterdir()):
+                                logger.info(f"Successfully extracted {archive_path.name} using 7-Zip.")
+                                return True, "7-Zip ile başarıyla ayıklandı."
+                        except Exception as e:
+                            logger.debug(f"7z attempt failed: {e}")
+
+            # B. WinRAR / UnRAR (High Priority for .rar)
+            unrar_candidates = [
+                r"C:\Program Files\WinRAR\UnRAR.exe",
+                r"C:\Program Files (x86)\WinRAR\UnRAR.exe",
+                r"C:\Program Files\WinRAR\WinRAR.exe",
+                r"C:\Program Files (x86)\WinRAR\WinRAR.exe",
+                os.path.join(local_appdata, r"Programs\WinRAR\UnRAR.exe") if local_appdata else "",
+                "unrar",
+                "winrar",
+            ]
+            for unrar_exe in unrar_candidates:
+                if unrar_exe and (shutil.which(unrar_exe) or Path(unrar_exe).exists()):
+                    dest_slash = str(temp_dest) + ("\\" if not str(temp_dest).endswith("\\") else "")
+                    for pwd in self.DEFAULT_PASSWORDS:
+                        pwd_str = pwd.decode() if pwd else ""
+                        cmd = [
+                            str(unrar_exe),
+                            "x",
+                            f"-p{pwd_str}",
+                            "-y",
+                            "-o+",
+                            str(archive_path),
+                            dest_slash,
+                        ]
+                        try:
+                            res = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                            if res.returncode == 0 and any(temp_dest.iterdir()):
+                                logger.info(f"Successfully extracted {archive_path.name} using UnRAR.")
+                                return True, "WinRAR/UnRAR ile başarıyla ayıklandı."
+                        except Exception as e:
+                            logger.debug(f"UnRAR attempt failed: {e}")
+
+            # C. System tar.exe (Windows 10/11 native fallback for non-password .tar/.zip/.gz)
             tar_paths = [r"C:\Windows\System32\tar.exe", "tar"]
             for tar_exe in tar_paths:
-                if shutil.which(tar_exe) or (os.name == "nt" and Path(tar_exe).exists()):
+                if shutil.which(tar_exe) or Path(tar_exe).exists():
                     cmd = [str(tar_exe), "-xf", str(archive_path), "-C", str(temp_dest)]
                     try:
-                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60, **extra_kwargs)
-                        if (res.returncode in (0, 1) or any(temp_dest.iterdir())) and any(temp_dest.iterdir()):
-                            logger.info(f"Successfully extracted {archive_path.name} using tar.")
-                            return True
+                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+                        if res.returncode == 0 and any(temp_dest.iterdir()):
+                            logger.info(f"Successfully extracted {archive_path.name} using tar.exe.")
+                            return True, "tar ile başarıyla ayıklandı."
                     except Exception as e:
                         logger.debug(f"tar attempt failed: {e}")
-            return False
 
-        # Order extractors intelligently by extension
-        if ext in [".rar", ".cbr"]:
-            extractors = [try_unrar, try_7z, try_tar]
-        elif ext in [".7z", ".cb7"]:
-            extractors = [try_7z, try_unrar, try_tar]
-        else:
-            extractors = [try_7z, try_unrar, try_tar]
+        except Exception as e:
+            logger.debug(f"Extended extractor error: {e}")
 
-        for extractor in extractors:
-            if extractor():
-                return True, "Başarıyla ayıklandı."
-
-        # Check if anything was extracted regardless
-        if any(temp_dest.iterdir()):
-            return True, "Başarıyla ayıklandı."
-
-        return False, f"'{archive_path.suffix}' formatındaki arşiv açılamadı. Arşiv şifreli olabilir veya dosya bozuk olabilir."
+        return (
+            False,
+            f"'{archive_path.suffix}' formatındaki şifreli arşiv açılamadı.\n"
+            f"Sistemde 7-Zip veya WinRAR bulunamadı.\n"
+            f"Lütfen 'BAGIMLILIKLARI_KUR.bat' çalıştırın veya 7-Zip / WinRAR kurun."
+        )
 
     def analyze_fix_archive(self, archive_path: Path, installed_games: List[InstalledGameInfo]) -> FixAnalysisResult:
         """Analyze archive contents and smartly match it to one of the installed Steam games."""

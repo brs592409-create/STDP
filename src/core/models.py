@@ -139,8 +139,6 @@ class SystemHealth(BaseModel):
     depotcache_writable: bool = False
     libraries_found: List[LibraryFolder] = Field(default_factory=list)
     active_hook_installed: bool = False
-    unlocker_installed: bool = False
-    unlocker_running: bool = False
     issues: List[str] = Field(default_factory=list)
 
     @computed_field
