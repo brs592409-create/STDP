@@ -1,8 +1,11 @@
 # STDP (Steam Tool Depotbox & Online-Fix Pipeline)
 
+[![Release](https://img.shields.io/github/v/release/brs592409-create/STDP?label=Portable%20Release&color=orange)](https://github.com/brs592409-create/STDP/releases/latest)
+[![Download ZIP](https://img.shields.io/badge/Download-STDP--Portable.zip-blueviolet?style=for-the-badge&logo=windows)](https://github.com/brs592409-create/STDP/releases/download/v1.2.0/STDP_Portable.zip)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![UI](https://img.shields.io/badge/UI-PyQt6-green.svg)](https://riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)]()
+
 
 **STDP**, `depotbox.org` üzerinden oyun manifestlerini tek tıkla Steam kütüphanenize işleyen ve `online-fix.me` üzerinden çok oyunculu (multiplayer) **Steam_Fix** dosyalarını otomatik olarak oyun dizinlerine kurup yedekleyen, **tamamen bağımsız (self-contained)** bir masaüstü aracıdır.
 
